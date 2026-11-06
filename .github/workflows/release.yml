@@ -1,0 +1,94 @@
+name: Release
+
+# Orb's releases mirror npm: started with a version of @dashhaus/orb this repository hasn't released, this takes
+# orb-dashboard.js out of that version's tarball, unchanged, and publishes it as the release v<version>, its one asset, which
+# the Home Assistant Marketplace and HACS install. It builds nothing and runs nothing from the package.
+#
+# Before anything is released, .github/mirror.js checks the tarball is the one npm's document names and that npm's
+# SLSA provenance for it names this tarball, built by Krystosterone/dashhaus's release workflow on main; then
+# `npm audit signatures` checks npm's signatures and the attestations' Sigstore signatures. Krystosterone/dashhaus's
+# Release workflow starts it with the version it just published, as its last job; run it by hand with no version for
+# npm's latest. Kept there at hacs/orb-dashboard/, with its rules in
+# spec/release.md → The skin repositories; change it there.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "The version to mirror; npm's latest when empty"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+      - id: plan
+        name: The version to mirror, unless it is released here already
+        env:
+          ASKED: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          version=${ASKED:-$(node .github/mirror.js latest)}
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::\"$version\" is not a version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if gh release view "v$version" >/dev/null 2>&1; then
+            echo "v$version is released; nothing to mirror"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Take the file out of the tarball npm serves, checking its provenance
+        if: steps.plan.outputs.release == 'true'
+        run: node .github/mirror.js fetch "${{ steps.plan.outputs.version }}" mirror
+      - name: Check npm's signatures and the provenance's
+        if: steps.plan.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          cd "$(mktemp -d)"
+          npm init -y >/dev/null
+          npm install --ignore-scripts --no-audit --no-fund "@dashhaus/orb@$VERSION"
+          npm audit signatures
+      # The page HACS shows is this repository's README, so it follows the release: the one from the commit that built it.
+      - name: Bring the README and hacs.json from the commit that built the file
+        if: steps.plan.outputs.release == 'true'
+        run: |
+          set -euo pipefail
+          cp mirror/README.md README.md
+          cp mirror/hacs.json hacs.json
+          if ! git diff --quiet -- README.md hacs.json; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "docs: README and hacs.json for v${{ steps.plan.outputs.version }}" -- README.md hacs.json
+            git push
+          fi
+      - name: Publish the release
+        if: steps.plan.outputs.release == 'true'
+        env:
+          VERSION: ${{ steps.plan.outputs.version }}
+        run: |
+          set -euo pipefail
+          flags=()
+          case "$VERSION" in *-*) flags+=(--prerelease) ;; *) flags+=(--latest) ;; esac
+          gh release create "v$VERSION" "mirror/orb-dashboard.js" --target "$(git rev-parse HEAD)" --title "Orb $VERSION" --notes-file mirror/notes.md "${flags[@]}"
