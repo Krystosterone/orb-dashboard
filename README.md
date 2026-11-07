@@ -3,7 +3,7 @@
 A dashboard for Home Assistant: soft, round cards read at a glance. Every supported device in a room-by-room page,
 laid out for you and kept up to date, on a phone, a tablet or a wall panel.
 
-![Orb on a phone](https://raw.githubusercontent.com/Krystosterone/dashhaus/main/docs/src/assets/skins/phone-orb-light.webp)
+![Orb on a tablet](https://raw.githubusercontent.com/Krystosterone/dashhaus/main/docs/src/assets/skins/tablet-orb-light.webp)
 
 Each card has a round button for its main action. Lights, climate and covers get a slider or stepper beside it, and
 readings show a big figure. The yellow accent shows what is on, and a dashed outline means a device is unavailable.
